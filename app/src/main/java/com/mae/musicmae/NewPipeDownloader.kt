@@ -17,17 +17,13 @@ object YouTubeExtractor {
         .followRedirects(true)
         .build()
 
-    private val cobaltInstances = listOf(
-        "https://api.cobalt.tools",
-        "https://cobalt.api.timelessnesses.me"
-    )
-
+    // Invidious instances as last-resort fallback
     private val invidiousInstances = listOf(
-        "https://invidious.kavin.rocks",
-        "https://yewtu.be",
-        "https://inv.vern.cc",
-        "https://invidious.privacyredirect.com",
-        "https://invidious.nerdvpn.de"
+        "https://invidious.io.lol",
+        "https://invidious.fdn.fr",
+        "https://invidious.lunar.icu",
+        "https://vid.puffyan.us",
+        "https://invidious.perennialte.ch"
     )
 
     suspend fun getAudioDownloadUrl(youtubeUrl: String): String = withContext(Dispatchers.IO) {
@@ -36,14 +32,14 @@ object YouTubeExtractor {
 
         val errors = mutableListOf<String>()
 
-        for (instance in cobaltInstances) {
-            try {
-                return@withContext fromCobalt(instance, youtubeUrl)
-            } catch (e: Exception) {
-                errors += "cobalt(${instance.substringAfterLast("/")}): ${e.message}"
-            }
+        // Primary: YouTube internal API (ANDROID_TESTSUITE client — no cipher, no 3rd party)
+        try {
+            return@withContext fromYouTubeInternal(videoId)
+        } catch (e: Exception) {
+            errors += "youtube-direct: ${e.message}"
         }
 
+        // Fallback: Invidious public instances
         for (instance in invidiousInstances) {
             try {
                 return@withContext fromInvidious(instance, videoId)
@@ -55,29 +51,71 @@ object YouTubeExtractor {
         throw Exception(errors.joinToString("\n"))
     }
 
-    private fun fromCobalt(baseUrl: String, url: String): String {
+    // Uses YouTube's internal player API with ANDROID_TESTSUITE client.
+    // This client returns direct (non-ciphered) stream URLs without any JS execution.
+    private fun fromYouTubeInternal(videoId: String): String {
         val body = JSONObject().apply {
-            put("url", url)
-            put("downloadMode", "audio")
-            put("audioFormat", "mp3")
-        }.toString().toRequestBody("application/json".toMediaType())
+            put("videoId", videoId)
+            put("context", JSONObject().apply {
+                put("client", JSONObject().apply {
+                    put("clientName", "ANDROID_TESTSUITE")
+                    put("clientVersion", "1.9")
+                    put("androidSdkVersion", 30)
+                    put("hl", "en")
+                    put("gl", "US")
+                    put("utcOffsetMinutes", 0)
+                })
+            })
+        }
 
         val request = Request.Builder()
-            .url("$baseUrl/")
-            .header("Accept", "application/json")
+            .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
             .header("Content-Type", "application/json")
-            .header("User-Agent", "Mozilla/5.0 (Android 14)")
-            .post(body)
+            .header("User-Agent", "com.google.android.youtube/1.9 (Linux; U; Android 10) gzip")
+            .header("X-YouTube-Client-Name", "30")
+            .header("X-YouTube-Client-Version", "1.9")
+            .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
         return client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
             val json = JSONObject(response.body?.string() ?: throw Exception("sin respuesta"))
-            val status = json.optString("status", "")
-            if (status == "redirect" || status == "tunnel") {
-                json.getString("url")
-            } else {
-                throw Exception(json.optJSONObject("error")?.optString("code") ?: "status=$status http=${response.code}")
+
+            val playability = json.optJSONObject("playabilityStatus")
+            val status = playability?.optString("status")
+            if (status != "OK") {
+                throw Exception(playability?.optString("reason") ?: "status=$status")
             }
+
+            val adaptiveFormats = json.optJSONObject("streamingData")
+                ?.optJSONArray("adaptiveFormats")
+                ?: throw Exception("sin adaptiveFormats")
+
+            var bestUrl = ""
+            var bestBitrate = -1
+
+            // Prefer audio/mp4 (m4a/aac) with a direct url field
+            for (i in 0 until adaptiveFormats.length()) {
+                val f = adaptiveFormats.getJSONObject(i)
+                val url = f.optString("url", "")
+                if (url.isNotBlank() && "audio/mp4" in f.optString("mimeType", "")) {
+                    val bitrate = f.optInt("bitrate", 0)
+                    if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = url }
+                }
+            }
+            // Fallback: any audio format with a direct url
+            if (bestUrl.isBlank()) {
+                for (i in 0 until adaptiveFormats.length()) {
+                    val f = adaptiveFormats.getJSONObject(i)
+                    val url = f.optString("url", "")
+                    if (url.isNotBlank() && "audio" in f.optString("mimeType", "")) {
+                        val bitrate = f.optInt("bitrate", 0)
+                        if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = url }
+                    }
+                }
+            }
+            if (bestUrl.isBlank()) throw Exception("0 URLs directas (todos los formatos están cifrados)")
+            bestUrl
         }
     }
 
@@ -91,15 +129,15 @@ object YouTubeExtractor {
         return client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
             val json = JSONObject(response.body?.string() ?: throw Exception("sin respuesta"))
-            val formats = json.getJSONArray("adaptiveFormats")
+            val formats = json.optJSONArray("adaptiveFormats")
+                ?: throw Exception("campo adaptiveFormats ausente")
 
             var bestUrl = ""
             var bestBitrate = -1
 
             for (i in 0 until formats.length()) {
                 val f = formats.getJSONObject(i)
-                val type = f.optString("type", "")
-                if ("audio/mp4" in type) {
+                if ("audio/mp4" in f.optString("type", "")) {
                     val bitrate = f.optInt("bitrate", 0)
                     if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = f.getString("url") }
                 }
