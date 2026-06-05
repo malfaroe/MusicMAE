@@ -17,13 +17,18 @@ object YouTubeExtractor {
         .followRedirects(true)
         .build()
 
-    // Invidious instances as last-resort fallback
+    private val pipedInstances = listOf(
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.tokhmi.xyz",
+        "https://piped-api.garudalinux.org",
+        "https://api.piped.projectsegfau.lt"
+    )
+
     private val invidiousInstances = listOf(
-        "https://invidious.io.lol",
-        "https://invidious.fdn.fr",
-        "https://invidious.lunar.icu",
-        "https://vid.puffyan.us",
-        "https://invidious.perennialte.ch"
+        "https://yt.artemislena.eu",
+        "https://invidious.tiekoetter.com",
+        "https://inv.riverside.rocks",
+        "https://invidious.slipfox.xyz"
     )
 
     suspend fun getAudioDownloadUrl(youtubeUrl: String): String = withContext(Dispatchers.IO) {
@@ -32,14 +37,45 @@ object YouTubeExtractor {
 
         val errors = mutableListOf<String>()
 
-        // Primary: YouTube internal API (ANDROID_TESTSUITE client — no cipher, no 3rd party)
+        // 1. IOS client — returns direct audio URLs, maintained by yt-dlp
         try {
-            return@withContext fromYouTubeInternal(videoId)
+            return@withContext youtubePlayerApi(
+                videoId,
+                clientName = "IOS",
+                clientVersion = "19.29.1",
+                clientId = 5,
+                userAgent = "com.google.ios.youtube/19.29.1 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15",
+                apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+                extra = mapOf("deviceModel" to "iPhone16,2")
+            )
         } catch (e: Exception) {
-            errors += "youtube-direct: ${e.message}"
+            errors += "ios: ${e.message}"
         }
 
-        // Fallback: Invidious public instances
+        // 2. ANDROID_MUSIC client — alternative direct-URL client
+        try {
+            return@withContext youtubePlayerApi(
+                videoId,
+                clientName = "ANDROID_MUSIC",
+                clientVersion = "6.42.52",
+                clientId = 21,
+                userAgent = "com.google.android.apps.youtube.music/6.42.52 (Linux; U; Android 11) gzip",
+                apiKey = null
+            )
+        } catch (e: Exception) {
+            errors += "android_music: ${e.message}"
+        }
+
+        // 3. Piped instances
+        for (instance in pipedInstances) {
+            try {
+                return@withContext fromPiped(instance, videoId)
+            } catch (e: Exception) {
+                errors += "${instance.removePrefix("https://pipedapi.").removePrefix("https://")}: ${e.message}"
+            }
+        }
+
+        // 4. Invidious instances
         for (instance in invidiousInstances) {
             try {
                 return@withContext fromInvidious(instance, videoId)
@@ -51,30 +87,41 @@ object YouTubeExtractor {
         throw Exception(errors.joinToString("\n"))
     }
 
-    // Uses YouTube's internal player API with ANDROID_TESTSUITE client.
-    // This client returns direct (non-ciphered) stream URLs without any JS execution.
-    private fun fromYouTubeInternal(videoId: String): String {
+    private fun youtubePlayerApi(
+        videoId: String,
+        clientName: String,
+        clientVersion: String,
+        clientId: Int,
+        userAgent: String,
+        apiKey: String?,
+        extra: Map<String, String> = emptyMap()
+    ): String {
+        val clientObj = JSONObject().apply {
+            put("clientName", clientName)
+            put("clientVersion", clientVersion)
+            put("hl", "en")
+            put("gl", "US")
+            put("utcOffsetMinutes", 0)
+            put("userAgent", userAgent)
+            for ((k, v) in extra) put(k, v)
+        }
         val body = JSONObject().apply {
             put("videoId", videoId)
-            put("context", JSONObject().apply {
-                put("client", JSONObject().apply {
-                    put("clientName", "ANDROID_TESTSUITE")
-                    put("clientVersion", "1.9")
-                    put("androidSdkVersion", 30)
-                    put("hl", "en")
-                    put("gl", "US")
-                    put("utcOffsetMinutes", 0)
-                })
-            })
+            put("context", JSONObject().put("client", clientObj))
+        }.toString().toRequestBody("application/json".toMediaType())
+
+        val url = buildString {
+            append("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            if (apiKey != null) append("&key=$apiKey")
         }
 
         val request = Request.Builder()
-            .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .url(url)
             .header("Content-Type", "application/json")
-            .header("User-Agent", "com.google.android.youtube/1.9 (Linux; U; Android 10) gzip")
-            .header("X-YouTube-Client-Name", "30")
-            .header("X-YouTube-Client-Version", "1.9")
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .header("User-Agent", userAgent)
+            .header("X-YouTube-Client-Name", clientId.toString())
+            .header("X-YouTube-Client-Version", clientVersion)
+            .post(body)
             .build()
 
         return client.newCall(request).execute().use { response ->
@@ -87,34 +134,65 @@ object YouTubeExtractor {
                 throw Exception(playability?.optString("reason") ?: "status=$status")
             }
 
-            val adaptiveFormats = json.optJSONObject("streamingData")
-                ?.optJSONArray("adaptiveFormats")
-                ?: throw Exception("sin adaptiveFormats")
+            extractBestAudioUrl(json)
+        }
+    }
 
-            var bestUrl = ""
-            var bestBitrate = -1
+    private fun extractBestAudioUrl(json: JSONObject): String {
+        val adaptiveFormats = json.optJSONObject("streamingData")
+            ?.optJSONArray("adaptiveFormats")
+            ?: throw Exception("sin adaptiveFormats")
 
-            // Prefer audio/mp4 (m4a/aac) with a direct url field
+        var bestUrl = ""; var bestBitrate = -1
+
+        // Prefer audio/mp4 (m4a/aac) with direct url
+        for (i in 0 until adaptiveFormats.length()) {
+            val f = adaptiveFormats.getJSONObject(i)
+            val url = f.optString("url", "")
+            if (url.isNotBlank() && "audio/mp4" in f.optString("mimeType", "")) {
+                val br = f.optInt("bitrate", 0)
+                if (br > bestBitrate) { bestBitrate = br; bestUrl = url }
+            }
+        }
+        // Fallback: any audio with direct url
+        if (bestUrl.isBlank()) {
             for (i in 0 until adaptiveFormats.length()) {
                 val f = adaptiveFormats.getJSONObject(i)
                 val url = f.optString("url", "")
-                if (url.isNotBlank() && "audio/mp4" in f.optString("mimeType", "")) {
-                    val bitrate = f.optInt("bitrate", 0)
-                    if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = url }
+                if (url.isNotBlank() && "audio" in f.optString("mimeType", "")) {
+                    val br = f.optInt("bitrate", 0)
+                    if (br > bestBitrate) { bestBitrate = br; bestUrl = url }
                 }
             }
-            // Fallback: any audio format with a direct url
-            if (bestUrl.isBlank()) {
-                for (i in 0 until adaptiveFormats.length()) {
-                    val f = adaptiveFormats.getJSONObject(i)
-                    val url = f.optString("url", "")
-                    if (url.isNotBlank() && "audio" in f.optString("mimeType", "")) {
-                        val bitrate = f.optInt("bitrate", 0)
-                        if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = url }
-                    }
-                }
+        }
+        if (bestUrl.isBlank()) throw Exception("0 URLs directas (todos cifrados)")
+        return bestUrl
+    }
+
+    private fun fromPiped(baseUrl: String, videoId: String): String {
+        val request = Request.Builder()
+            .url("$baseUrl/streams/$videoId")
+            .header("User-Agent", "Mozilla/5.0 (Android 14)")
+            .header("Accept", "application/json")
+            .build()
+
+        return client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
+            val body = response.body?.string() ?: throw Exception("sin respuesta")
+            if (body.startsWith("<")) throw Exception("HTML en lugar de JSON")
+            val json = JSONObject(body)
+            val streams = json.optJSONArray("audioStreams")
+                ?: throw Exception("sin audioStreams")
+            if (streams.length() == 0) throw Exception("audioStreams vacío")
+
+            var bestUrl = ""; var bestBitrate = -1
+            for (i in 0 until streams.length()) {
+                val s = streams.getJSONObject(i)
+                val bitrate = s.optInt("bitrate", 0)
+                val url = s.optString("url", "")
+                if (url.isNotBlank() && bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = url }
             }
-            if (bestUrl.isBlank()) throw Exception("0 URLs directas (todos los formatos están cifrados)")
+            if (bestUrl.isBlank()) throw Exception("sin URL en audioStreams")
             bestUrl
         }
     }
@@ -128,26 +206,26 @@ object YouTubeExtractor {
 
         return client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-            val json = JSONObject(response.body?.string() ?: throw Exception("sin respuesta"))
+            val body = response.body?.string() ?: throw Exception("sin respuesta")
+            if (body.startsWith("<")) throw Exception("HTML en lugar de JSON")
+            val json = JSONObject(body)
             val formats = json.optJSONArray("adaptiveFormats")
-                ?: throw Exception("campo adaptiveFormats ausente")
+                ?: throw Exception("sin adaptiveFormats")
 
-            var bestUrl = ""
-            var bestBitrate = -1
-
+            var bestUrl = ""; var bestBitrate = -1
             for (i in 0 until formats.length()) {
                 val f = formats.getJSONObject(i)
                 if ("audio/mp4" in f.optString("type", "")) {
-                    val bitrate = f.optInt("bitrate", 0)
-                    if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = f.getString("url") }
+                    val br = f.optInt("bitrate", 0)
+                    if (br > bestBitrate) { bestBitrate = br; bestUrl = f.getString("url") }
                 }
             }
             if (bestUrl.isBlank()) {
                 for (i in 0 until formats.length()) {
                     val f = formats.getJSONObject(i)
                     if ("audio" in f.optString("type", "")) {
-                        val bitrate = f.optInt("bitrate", 0)
-                        if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = f.getString("url") }
+                        val br = f.optInt("bitrate", 0)
+                        if (br > bestBitrate) { bestBitrate = br; bestUrl = f.getString("url") }
                     }
                 }
             }
