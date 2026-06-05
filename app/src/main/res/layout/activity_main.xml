@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/background">
+
+    <!-- Top bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="@color/colorPrimary">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textColor="@color/textPrimary"
+            android:textSize="20sp"
+            android:textStyle="bold"/>
+
+        <Button
+            android:id="@+id/btnSettings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚙"
+            android:textSize="18sp"
+            android:backgroundTint="@android:color/transparent"
+            android:textColor="@color/textPrimary"/>
+    </LinearLayout>
+
+    <!-- IDLE: source selection -->
+    <LinearLayout
+        android:id="@+id/llIdle"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Selecciona una canción"
+            android:textColor="@color/textSecondary"
+            android:textSize="16sp"
+            android:gravity="center"
+            android:paddingBottom="32dp"/>
+
+        <Button
+            android:id="@+id/btnPickFile"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="@string/btn_file"
+            android:backgroundTint="@color/surface"
+            android:textColor="@color/textPrimary"
+            android:layout_marginBottom="16dp"/>
+
+        <Button
+            android:id="@+id/btnYoutube"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="@string/btn_youtube"
+            android:backgroundTint="@color/colorAccent"
+            android:textColor="@color/white"/>
+    </LinearLayout>
+
+    <!-- PROCESSING -->
+    <LinearLayout
+        android:id="@+id/llProcessing"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="24dp"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:indeterminate="true"
+            android:indeterminateTint="@color/colorAccent"/>
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Procesando..."
+            android:textColor="@color/textPrimary"
+            android:textSize="16sp"
+            android:layout_marginTop="20dp"
+            android:gravity="center"/>
+
+        <Button
+            android:id="@+id/btnCancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/btn_cancel"
+            android:backgroundTint="@color/mutedColor"
+            android:textColor="@color/white"
+            android:layout_marginTop="24dp"/>
+    </LinearLayout>
+
+    <!-- PLAYER -->
+    <ScrollView
+        android:id="@+id/llPlayer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingVertical="8dp">
+
+            <!-- Song title -->
+            <TextView
+                android:id="@+id/tvSongTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="—"
+                android:textColor="@color/textPrimary"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:padding="8dp"
+                android:ellipsize="end"
+                android:maxLines="1"/>
+
+            <!-- Stem channels -->
+            <include android:id="@+id/stem0" layout="@layout/item_stem"/>
+            <include android:id="@+id/stem1" layout="@layout/item_stem"/>
+            <include android:id="@+id/stem2" layout="@layout/item_stem"/>
+            <include android:id="@+id/stem3" layout="@layout/item_stem"/>
+
+            <!-- Progress -->
+            <SeekBar
+                android:id="@+id/seekProgress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="12dp"
+                android:layout_marginTop="12dp"
+                android:progressTint="@color/colorAccent"
+                android:thumbTint="@color/white"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="4dp">
+
+                <TextView
+                    android:id="@+id/tvPosition"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0:00"
+                    android:textColor="@color/textSecondary"
+                    android:textSize="12sp"/>
+
+                <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
+
+                <TextView
+                    android:id="@+id/tvDuration"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0:00"
+                    android:textColor="@color/textSecondary"
+                    android:textSize="12sp"/>
+            </LinearLayout>
+
+            <!-- Transport -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="8dp">
+
+                <Button
+                    android:id="@+id/btnPlayPause"
+                    android:layout_width="80dp"
+                    android:layout_height="48dp"
+                    android:text="▶"
+                    android:textSize="20sp"
+                    android:backgroundTint="@color/colorAccent"
+                    android:textColor="@color/white"
+                    android:layout_marginEnd="16dp"/>
+
+                <Button
+                    android:id="@+id/btnStop"
+                    android:layout_width="80dp"
+                    android:layout_height="48dp"
+                    android:text="■"
+                    android:textSize="20sp"
+                    android:backgroundTint="@color/surface"
+                    android:textColor="@color/white"/>
+            </LinearLayout>
+
+            <!-- Pitch control -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/label_pitch"
+                android:textColor="@color/textSecondary"
+                android:textSize="12sp"
+                android:gravity="center"
+                android:layout_marginTop="16dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <Button android:id="@+id/btnPitchDown"
+                    android:layout_width="48dp" android:layout_height="48dp"
+                    android:text="−" android:textSize="20sp"
+                    android:backgroundTint="@color/surface" android:textColor="@color/white"/>
+
+                <TextView android:id="@+id/tvPitch"
+                    android:layout_width="72dp" android:layout_height="wrap_content"
+                    android:text="0 st" android:gravity="center"
+                    android:textColor="@color/textPrimary" android:textSize="16sp"
+                    android:textStyle="bold"/>
+
+                <Button android:id="@+id/btnPitchUp"
+                    android:layout_width="48dp" android:layout_height="48dp"
+                    android:text="+" android:textSize="20sp"
+                    android:backgroundTint="@color/surface" android:textColor="@color/white"/>
+            </LinearLayout>
+
+            <!-- Tempo control -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/label_tempo"
+                android:textColor="@color/textSecondary"
+                android:textSize="12sp"
+                android:gravity="center"
+                android:layout_marginTop="8dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <Button android:id="@+id/btnTempoDown"
+                    android:layout_width="48dp" android:layout_height="48dp"
+                    android:text="−" android:textSize="20sp"
+                    android:backgroundTint="@color/surface" android:textColor="@color/white"/>
+
+                <TextView android:id="@+id/tvTempo"
+                    android:layout_width="72dp" android:layout_height="wrap_content"
+                    android:text="1.0×" android:gravity="center"
+                    android:textColor="@color/textPrimary" android:textSize="16sp"
+                    android:textStyle="bold"/>
+
+                <Button android:id="@+id/btnTempoUp"
+                    android:layout_width="48dp" android:layout_height="48dp"
+                    android:text="+" android:textSize="20sp"
+                    android:backgroundTint="@color/surface" android:textColor="@color/white"/>
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnNewSong"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_new_song"
+                android:backgroundTint="@color/surface"
+                android:textColor="@color/textSecondary"
+                android:layout_margin="16dp"/>
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

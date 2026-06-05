@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">MusicMAE</string>
+    <string name="btn_file">Abrir Archivo / Google Drive</string>
+    <string name="btn_youtube">URL de YouTube</string>
+    <string name="btn_settings">Configuración</string>
+    <string name="hint_youtube">https://youtube.com/watch?v=...</string>
+    <string name="hint_api_key">Token de Replicate</string>
+    <string name="btn_process">Separar pistas</string>
+    <string name="btn_cancel">Cancelar</string>
+    <string name="btn_new_song">Nueva canción</string>
+    <string name="label_pitch">Tonalidad</string>
+    <string name="label_tempo">Tempo</string>
+</resources>
