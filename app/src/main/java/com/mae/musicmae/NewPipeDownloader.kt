@@ -26,25 +26,22 @@ object YouTubeExtractor {
     )
 
     suspend fun getAudioDownloadUrl(youtubeUrl: String): String = withContext(Dispatchers.IO) {
-        extractVideoId(youtubeUrl)
+        val videoId = extractVideoId(youtubeUrl)
             ?: throw Exception("URL inválida. Usa: youtube.com/watch?v=... o youtu.be/...")
 
         val errors = mutableListOf<String>()
 
-        // 1. Intenta cobalt.tools
         try {
             return@withContext fromCobalt(youtubeUrl)
         } catch (e: Exception) {
             errors += "cobalt: ${e.message}"
         }
 
-        // 2. Intenta instancias de Piped
-        val videoId = extractVideoId(youtubeUrl)!!
         for (instance in pipedInstances) {
             try {
                 return@withContext fromPiped(instance, videoId)
             } catch (e: Exception) {
-                errors += "${instance.substringAfter("https://")}: ${e.message}"
+                errors += "${instance.removePrefix("https://")}: ${e.message}"
             }
         }
 
@@ -64,12 +61,15 @@ object YouTubeExtractor {
             .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        client.newCall(request).execute().use { response ->
+        return client.newCall(request).execute().use { response ->
             val json = JSONObject(response.body?.string() ?: throw Exception("Sin respuesta"))
             val status = json.optString("status", "")
-            if (status == "redirect" || status == "tunnel") return json.getString("url")
-            val errCode = json.optJSONObject("error")?.optString("code") ?: status
-            throw Exception(errCode)
+            if (status == "redirect" || status == "tunnel") {
+                json.getString("url")
+            } else {
+                val errCode = json.optJSONObject("error")?.optString("code") ?: status
+                throw Exception(errCode)
+            }
         }
     }
 
@@ -80,7 +80,7 @@ object YouTubeExtractor {
             .header("Accept", "application/json")
             .build()
 
-        client.newCall(request).execute().use { response ->
+        return client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
             val body = response.body?.string() ?: throw Exception("Sin respuesta")
             val json = JSONObject(body)
@@ -92,7 +92,6 @@ object YouTubeExtractor {
             var bestUrl = ""
             var bestBitrate = -1
 
-            // Preferir mp4/m4a por compatibilidad con Demucs
             for (i in 0 until streams.length()) {
                 val s = streams.getJSONObject(i)
                 val mime = s.optString("mimeType", "")
@@ -102,7 +101,6 @@ object YouTubeExtractor {
                     bestUrl = s.getString("url")
                 }
             }
-            // Fallback: cualquier formato
             if (bestUrl.isBlank()) {
                 for (i in 0 until streams.length()) {
                     val s = streams.getJSONObject(i)
