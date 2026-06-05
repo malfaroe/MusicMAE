@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -65,11 +66,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (apiKey.isBlank()) { state.value = UiState.Err("Configura tu token en ⚙"); return }
         processJob = viewModelScope.launch {
             try {
-                state.value = UiState.Processing("Obteniendo stream de YouTube...")
+                val videoId = YouTubeExtractor.extractVideoId(url)
+                    ?: throw Exception("URL inválida. Usa: youtube.com/watch?v=... o youtu.be/...")
+
+                // Try fast API methods first; fall back to real WebView (slower but reliable)
+                state.value = UiState.Processing("Obteniendo audio de YouTube...")
                 val streamUrl = try {
                     YouTubeExtractor.getAudioDownloadUrl(url)
-                } catch (e: Exception) {
-                    throw Exception("YouTube falló:\n${e.message}\n\nAlternativa: descarga el audio como MP3 y cárgalo con 'Abrir Archivo'.")
+                } catch (apiErr: Exception) {
+                    state.postValue(UiState.Processing("Cargando en navegador embebido…\n(puede tomar 15-30 s)"))
+                    try {
+                        withContext(Dispatchers.Main) {
+                            suspendCancellableCoroutine { cont ->
+                                YouTubeWebExtractor(getApplication()).extract(videoId, cont)
+                            }
+                        }
+                    } catch (webErr: Exception) {
+                        throw Exception("API: ${apiErr.message}\nWebView: ${webErr.message}\n\nAlternativa: descarga el audio como MP3 y cárgalo con 'Abrir Archivo'.")
+                    }
                 }
 
                 state.value = UiState.Processing("Descargando audio...")
@@ -84,7 +98,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     state.postValue(UiState.Processing("Replicate: $status..."))
                 }
 
-                val videoId = url.substringAfter("v=").take(11).ifBlank { "youtube" }
                 downloadAndLoad(stems, repo, videoId)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
