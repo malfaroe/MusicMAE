@@ -17,12 +17,17 @@ object YouTubeExtractor {
         .followRedirects(true)
         .build()
 
-    private val pipedInstances = listOf(
-        "https://pipedapi.kavin.rocks",
-        "https://pipedapi.in",
-        "https://piped-api.garudalinux.org",
-        "https://api.piped.projectsegfau.lt",
-        "https://pipedapi.adminforge.de"
+    private val cobaltInstances = listOf(
+        "https://api.cobalt.tools",
+        "https://cobalt.api.timelessnesses.me"
+    )
+
+    private val invidiousInstances = listOf(
+        "https://invidious.kavin.rocks",
+        "https://yewtu.be",
+        "https://inv.vern.cc",
+        "https://invidious.privacyredirect.com",
+        "https://invidious.nerdvpn.de"
     )
 
     suspend fun getAudioDownloadUrl(youtubeUrl: String): String = withContext(Dispatchers.IO) {
@@ -31,87 +36,84 @@ object YouTubeExtractor {
 
         val errors = mutableListOf<String>()
 
-        try {
-            return@withContext fromCobalt(youtubeUrl)
-        } catch (e: Exception) {
-            errors += "cobalt: ${e.message}"
+        for (instance in cobaltInstances) {
+            try {
+                return@withContext fromCobalt(instance, youtubeUrl)
+            } catch (e: Exception) {
+                errors += "cobalt(${instance.substringAfterLast("/")}): ${e.message}"
+            }
         }
 
-        for (instance in pipedInstances) {
+        for (instance in invidiousInstances) {
             try {
-                return@withContext fromPiped(instance, videoId)
+                return@withContext fromInvidious(instance, videoId)
             } catch (e: Exception) {
                 errors += "${instance.removePrefix("https://")}: ${e.message}"
             }
         }
 
-        throw Exception("No se pudo obtener audio.\n${errors.joinToString("\n")}")
+        throw Exception(errors.joinToString("\n"))
     }
 
-    private fun fromCobalt(url: String): String {
-        val bodyJson = JSONObject().apply {
+    private fun fromCobalt(baseUrl: String, url: String): String {
+        val body = JSONObject().apply {
             put("url", url)
             put("downloadMode", "audio")
             put("audioFormat", "mp3")
-        }
+        }.toString().toRequestBody("application/json".toMediaType())
+
         val request = Request.Builder()
-            .url("https://api.cobalt.tools/")
+            .url("$baseUrl/")
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
-            .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
+            .header("User-Agent", "Mozilla/5.0 (Android 14)")
+            .post(body)
             .build()
 
         return client.newCall(request).execute().use { response ->
-            val json = JSONObject(response.body?.string() ?: throw Exception("Sin respuesta"))
+            val json = JSONObject(response.body?.string() ?: throw Exception("sin respuesta"))
             val status = json.optString("status", "")
             if (status == "redirect" || status == "tunnel") {
                 json.getString("url")
             } else {
-                val errCode = json.optJSONObject("error")?.optString("code") ?: status
-                throw Exception(errCode)
+                throw Exception(json.optJSONObject("error")?.optString("code") ?: "status=$status http=${response.code}")
             }
         }
     }
 
-    private fun fromPiped(baseUrl: String, videoId: String): String {
+    private fun fromInvidious(baseUrl: String, videoId: String): String {
         val request = Request.Builder()
-            .url("$baseUrl/streams/$videoId")
+            .url("$baseUrl/api/v1/videos/$videoId?fields=adaptiveFormats")
             .header("User-Agent", "Mozilla/5.0 (Android 14)")
             .header("Accept", "application/json")
             .build()
 
         return client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-            val body = response.body?.string() ?: throw Exception("Sin respuesta")
-            val json = JSONObject(body)
+            val json = JSONObject(response.body?.string() ?: throw Exception("sin respuesta"))
+            val formats = json.getJSONArray("adaptiveFormats")
 
-            if (json.has("message") && !json.has("audioStreams"))
-                throw Exception(json.optString("message", "error"))
-
-            val streams = json.getJSONArray("audioStreams")
             var bestUrl = ""
             var bestBitrate = -1
 
-            for (i in 0 until streams.length()) {
-                val s = streams.getJSONObject(i)
-                val mime = s.optString("mimeType", "")
-                val bitrate = s.optInt("bitrate", 0)
-                if (("mp4" in mime || "m4a" in mime) && bitrate > bestBitrate) {
-                    bestBitrate = bitrate
-                    bestUrl = s.getString("url")
+            for (i in 0 until formats.length()) {
+                val f = formats.getJSONObject(i)
+                val type = f.optString("type", "")
+                if ("audio/mp4" in type) {
+                    val bitrate = f.optInt("bitrate", 0)
+                    if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = f.getString("url") }
                 }
             }
             if (bestUrl.isBlank()) {
-                for (i in 0 until streams.length()) {
-                    val s = streams.getJSONObject(i)
-                    val bitrate = s.optInt("bitrate", 0)
-                    if (bitrate > bestBitrate) {
-                        bestBitrate = bitrate
-                        bestUrl = s.getString("url")
+                for (i in 0 until formats.length()) {
+                    val f = formats.getJSONObject(i)
+                    if ("audio" in f.optString("type", "")) {
+                        val bitrate = f.optInt("bitrate", 0)
+                        if (bitrate > bestBitrate) { bestBitrate = bitrate; bestUrl = f.getString("url") }
                     }
                 }
             }
-            if (bestUrl.isBlank()) throw Exception("0 streams encontrados")
+            if (bestUrl.isBlank()) throw Exception("0 formatos de audio")
             bestUrl
         }
     }

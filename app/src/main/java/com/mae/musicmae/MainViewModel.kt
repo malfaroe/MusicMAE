@@ -120,7 +120,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } ?: "mp3"
         }
         val dest = File(ctx.cacheDir, "upload.$ext")
-        ctx.contentResolver.openInputStream(uri)!!.use { it.copyTo(dest.outputStream()) }
+        val input = ctx.contentResolver.openInputStream(uri)
+            ?: throw Exception("No se pudo leer el archivo (sin permiso o URI inválida)")
+        input.use { stream -> dest.outputStream().use { stream.copyTo(it) } }
+        if (dest.length() == 0L) throw Exception("Archivo vacío — Google Drive no pudo entregarlo")
         dest
     }
 

@@ -65,7 +65,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 is UiState.Err -> {
                     showSection(idle = true)
-                    Toast.makeText(this, state.message, Toast.LENGTH_LONG).show()
+                    AlertDialog.Builder(this)
+                        .setTitle("Error")
+                        .setMessage(state.message)
+                        .setPositiveButton("OK", null)
+                        .show()
                 }
             }
         }
