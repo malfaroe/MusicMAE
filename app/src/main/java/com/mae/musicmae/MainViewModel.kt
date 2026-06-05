@@ -11,9 +11,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.schabi.newpipe.extractor.NewPipe
-import org.schabi.newpipe.extractor.stream.StreamInfo
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 sealed class UiState {
     object Idle : UiState()
@@ -30,16 +31,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private var processJob: Job? = null
 
+    private val downloadClient = OkHttpClient.Builder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)
+        .build()
+
     fun processUri(uri: Uri, displayName: String) {
         val apiKey = prefs.apiKey
-        if (apiKey.isBlank()) {
-            state.value = UiState.Err("Configura tu token de Replicate en ⚙")
-            return
-        }
+        if (apiKey.isBlank()) { state.value = UiState.Err("Configura tu token en ⚙"); return }
         processJob = viewModelScope.launch {
             try {
                 state.value = UiState.Processing("Copiando archivo...")
-                val file = copyUriToCache(getApplication(), uri, displayName)
+                val file = copyUriToCache(uri, displayName)
 
                 state.value = UiState.Processing("Subiendo a Replicate...")
                 val repo = ReplicateRepository(apiKey)
@@ -49,7 +52,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val stems = repo.runDemucs(audioUrl) { status ->
                     state.postValue(UiState.Processing("Replicate: $status..."))
                 }
-
                 downloadAndLoad(stems, repo, displayName)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -60,29 +62,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun processYouTube(url: String) {
         val apiKey = prefs.apiKey
-        if (apiKey.isBlank()) {
-            state.value = UiState.Err("Configura tu token de Replicate en ⚙")
-            return
-        }
+        if (apiKey.isBlank()) { state.value = UiState.Err("Configura tu token en ⚙"); return }
         processJob = viewModelScope.launch {
             try {
-                state.value = UiState.Processing("Extrayendo audio de YouTube...")
-                val streamUrl = withContext(Dispatchers.IO) {
-                    val info = StreamInfo.getInfo(NewPipe.getService(0), url)
-                    info.audioStreams
-                        .maxByOrNull { it.averageBitrate }
-                        ?.url
-                        ?: throw Exception("No se encontró stream de audio")
-                }
+                state.value = UiState.Processing("Obteniendo stream de YouTube...")
+                val streamUrl = YouTubeExtractor.getAudioStreamUrl(url)
+
+                state.value = UiState.Processing("Descargando audio...")
+                val audioFile = downloadToCache(streamUrl, "yt_audio.m4a")
+
+                state.value = UiState.Processing("Subiendo a Replicate...")
+                val repo = ReplicateRepository(apiKey)
+                val uploadedUrl = repo.uploadAudioFile(audioFile)
 
                 state.value = UiState.Processing("Separando pistas...")
-                val repo = ReplicateRepository(apiKey)
-                val stems = repo.runDemucs(streamUrl) { status ->
+                val stems = repo.runDemucs(uploadedUrl) { status ->
                     state.postValue(UiState.Processing("Replicate: $status..."))
                 }
 
-                val title = url.substringAfter("v=").take(11)
-                downloadAndLoad(stems, repo, title)
+                val videoId = url.substringAfter("v=").take(11).ifBlank { "youtube" }
+                downloadAndLoad(stems, repo, videoId)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 state.postValue(UiState.Err(e.message ?: "Error desconocido"))
@@ -109,19 +108,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun copyUriToCache(ctx: Context, uri: Uri, name: String): File =
-        withContext(Dispatchers.IO) {
-            val ext = MimeTypeMap.getFileExtensionFromUrl(name).ifBlank {
-                ctx.contentResolver.getType(uri)?.let {
-                    MimeTypeMap.getSingleton().getExtensionFromMimeType(it)
-                } ?: "mp3"
-            }
-            val dest = File(ctx.cacheDir, "upload.$ext")
-            ctx.contentResolver.openInputStream(uri)!!.use { input ->
-                dest.outputStream().use { input.copyTo(it) }
-            }
-            dest
+    private suspend fun copyUriToCache(uri: Uri, name: String): File = withContext(Dispatchers.IO) {
+        val ctx = getApplication<Application>().applicationContext
+        val ext = MimeTypeMap.getFileExtensionFromUrl(name).ifBlank {
+            ctx.contentResolver.getType(uri)?.let {
+                MimeTypeMap.getSingleton().getExtensionFromMimeType(it)
+            } ?: "mp3"
         }
+        val dest = File(ctx.cacheDir, "upload.$ext")
+        ctx.contentResolver.openInputStream(uri)!!.use { it.copyTo(dest.outputStream()) }
+        dest
+    }
+
+    private suspend fun downloadToCache(url: String, filename: String): File = withContext(Dispatchers.IO) {
+        val dest = File(getApplication<Application>().cacheDir, filename)
+        val request = Request.Builder().url(url).build()
+        downloadClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("Error descargando audio: ${response.code}")
+            response.body!!.byteStream().copyTo(dest.outputStream())
+        }
+        dest
+    }
 
     override fun onCleared() {
         super.onCleared()
