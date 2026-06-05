@@ -66,10 +66,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         processJob = viewModelScope.launch {
             try {
                 state.value = UiState.Processing("Obteniendo stream de YouTube...")
-                val streamUrl = YouTubeExtractor.getAudioStreamUrl(url)
+                val streamUrl = try {
+                    YouTubeExtractor.getAudioDownloadUrl(url)
+                } catch (e: Exception) {
+                    throw Exception("YouTube falló:\n${e.message}\n\nAlternativa: descarga el audio como MP3 y cárgalo con 'Abrir Archivo'.")
+                }
 
                 state.value = UiState.Processing("Descargando audio...")
-                val audioFile = downloadToCache(streamUrl, "yt_audio.m4a")
+                val audioFile = downloadToCache(streamUrl, "yt_audio.mp3")
 
                 state.value = UiState.Processing("Subiendo a Replicate...")
                 val repo = ReplicateRepository(apiKey)
